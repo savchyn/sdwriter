@@ -53,18 +53,27 @@ const char copyright[] = "Copyright (C) 2015 Serge Vakulenko";
 /*
  * Terminate the program with a proper status.
  */
-void quit(int ok)
-{
-    exit(ok ? 0 : -1);
-}
+#define quit(errorcode) exit(errorcode)
 
+enum rrors{
+    eInterrupted = 1,
+    eCantCreateUdev,
+    eNoRemovableDevice,
+    eInvalidUserInput,
+    eCancelled,
+    eMismatch,
+    eNoSourceFile,
+    eNoDestinationFile,
+    eReadError,
+    eWriteError,
+};
 /*
  * Signal handler.
  */
 void interrupted(int signum)
 {
     fprintf(stderr, "\nInterrupted.\n");
-    quit(0);
+    quit(eInterrupted);
 }
 
 /*
@@ -98,7 +107,7 @@ void get_devices(char *devtab[], int maxdev)
     struct udev *udev = udev_new();
     if (! udev) {
         printf("Can't create udev\n");
-        quit(0);
+        quit(eCantCreateUdev);
     }
 
     /*
@@ -285,7 +294,7 @@ const char *ask_device()
     get_devices(devices, MAXDEV);
     if (! devices[0]) {
         printf("No removable USB disks avalable.\n");
-        quit(0);
+        quit(eNoRemovableDevice);
     }
 
     for (;;) {
@@ -303,11 +312,11 @@ const char *ask_device()
         fflush(stdout);
 
         if (! fgets(reply, sizeof(reply), stdin)) {
-            quit(0);
+            quit(eInvalidUserInput);
         }
         if (*reply == 'q' || *reply == 'Q') {
             printf("Cancelled.\n");
-            quit(0);
+            quit(eCancelled);
         }
         if (*reply >= '1' && *reply < '1'+ndev) {
             char *devname = devices[*reply - '1'];
@@ -361,7 +370,7 @@ void print_mismatch(char *valid, char *invalid, int nbytes,
         if (byte != expected) {
             printf ("\nError at address 0x%llX: file=0x%02X, disk=0x%02X\n",
                 offset + i, expected, byte);
-            quit(0);
+            quit(eMismatch);
         }
     }
 }
@@ -371,7 +380,7 @@ void print_mismatch(char *valid, char *invalid, int nbytes,
  */
 void write_image(const char *filename, const char *device_name, int verify_only)
 {
-    char buf[32*1024];
+    static char buf[32*1024];
     int src, dest, n, progress_len, progress_step;
     struct stat st;
     off_t nbytes, count;
@@ -380,12 +389,12 @@ void write_image(const char *filename, const char *device_name, int verify_only)
     src = open(filename, O_RDONLY);
     if (src < 0) {
         perror(filename);
-        quit(0);
+        quit(eNoSourceFile);
     }
     dest = open(device_name, O_RDWR);
     if (dest < 0) {
         perror(device_name);
-        quit(0);
+        quit(eNoDestinationFile);
     }
     fstat(src, &st);
     nbytes = st.st_size;
@@ -421,13 +430,13 @@ void write_image(const char *filename, const char *device_name, int verify_only)
                 n = sizeof(buf);
             if (read(src, buf, n) != n) {
                 fprintf(stderr, "%s: Read error\n", filename);
-                quit(0);
+                quit(eReadError);
             }
 
             /* Write data to the disk. */
             if (write(dest, buf, n) != n) {
                 fprintf(stderr, "%s: Write error\n", device_name);
-                quit(0);
+                quit(eWriteError);
             }
             progress(progress_step);
         }
@@ -448,13 +457,13 @@ void write_image(const char *filename, const char *device_name, int verify_only)
                 n = sizeof(buf);
             if (read(src, buf, n) != n) {
                 fprintf(stderr, "%s: Read error\n", filename);
-                quit(0);
+                quit(eReadError);
             }
 
             /* Read destination data. */
             if (read(dest, buf2, n) != n) {
                 fprintf(stderr, "%s: Read error\n", device_name);
-                quit(0);
+                quit(eReadError);
             }
 
             /* Compare. */
@@ -462,7 +471,7 @@ void write_image(const char *filename, const char *device_name, int verify_only)
                 fprintf(stderr, "DATA ERROR!\n");
                 print_mismatch(buf, buf2, n,
                     lseek(src, 0, SEEK_CUR) - n);
-                quit(0);
+                quit(eMismatch);
             }
             progress(progress_step);
         }
@@ -560,6 +569,5 @@ int main(int argc, char *argv[])
 
     write_image(filename, device_name, verify_only);
 
-    quit(1);
     return 0;
 }
